@@ -6,6 +6,8 @@ import threading
 import time
 from dotenv import load_dotenv
 from itertools import cycle
+import json
+from datetime import datetime
 
 load_dotenv()
 
@@ -19,7 +21,7 @@ api_keys = os.getenv("NVIDIA_API_KEYS", "").split(",")
 api_key_cycle = cycle(api_keys)
 api_key_lock = threading.Lock()
 
-# Epic counter setup
+# Counter setup
 counters = {
     'c1': 0,  # rightmost counter
     'c2': 0,  # second from right
@@ -61,7 +63,7 @@ def home():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Nvidia API Proxy</title>
+        <title>Epic Counter</title>
         <style>
             body {
                 margin: 0;
@@ -100,6 +102,8 @@ def home():
             h1 {
                 color: #00ff00;
                 margin-bottom: 1rem;
+                font-family: 'Courier New', monospace;
+                text-shadow: 0 0 10px #00ff00;
             }
             .epic-counter {
                 display: flex;
@@ -117,6 +121,23 @@ def home():
                 color: #00ff00;
                 text-shadow: 0 0 10px #00ff00;
                 border: 1px solid #00ff00;
+                position: relative;
+                overflow: hidden;
+            }
+            .counter-digit::after {
+                content: '';
+                position: absolute;
+                top: -50%;
+                left: -50%;
+                width: 200%;
+                height: 200%;
+                background: linear-gradient(
+                    45deg,
+                    transparent 45%,
+                    rgba(0, 255, 0, 0.1) 50%,
+                    transparent 55%
+                );
+                animation: shine 3s infinite;
             }
             .time-calc {
                 background: #222;
@@ -135,27 +156,26 @@ def home():
                 font-weight: bold;
                 margin: 1rem 0;
                 transition: all 0.3s;
+                font-family: 'Courier New', monospace;
             }
             .calc-button:hover {
                 background: #00cc00;
                 box-shadow: 0 0 10px #00ff00;
+                transform: scale(1.05);
             }
-            .endpoints {
-                background: #222;
-                padding: 1rem;
-                border-radius: 0.5rem;
-                margin-top: 2rem;
-                text-align: left;
-            }
-            .endpoint {
-                margin: 0.5rem 0;
-                color: #00ff00;
-                font-family: monospace;
+            .keep-alive {
+                margin-top: 1rem;
+                font-size: 0.8rem;
+                color: #666;
             }
             @keyframes pulse {
                 0% { box-shadow: 0 0 0 0 rgba(0, 255, 0, 0.7); }
                 70% { box-shadow: 0 0 0 10px rgba(0, 255, 0, 0); }
                 100% { box-shadow: 0 0 0 0 rgba(0, 255, 0, 0); }
+            }
+            @keyframes shine {
+                0% { transform: translateX(-100%) rotate(45deg); }
+                100% { transform: translateX(100%) rotate(45deg); }
             }
         </style>
     </head>
@@ -175,12 +195,7 @@ def home():
             </div>
             <button class="calc-button" onclick="calculateTime()">Calculate Total Time</button>
             <div class="time-calc" id="timeCalc"></div>
-            <div class="endpoints">
-                <p><strong>Suggestions:</strong></p>
-                <div class="endpoint"> A Snake Game? </div>
-                <div class="endpoint">A Tetris Game?</div>
-                <div class="endpoint">A Flappy Bird Game?</div>
-            </div>
+            <div id="keepAliveStatus" class="keep-alive">Keep-alive active...</div>
         </div>
         <script>
             function padNumber(num) {
@@ -231,7 +246,7 @@ def home():
                         timeCalc.innerHTML = `
                             <p><strong>Total time elapsed:</strong></p>
                             <p>🕒 ${totalSeconds.toLocaleString()} seconds</p>
-                            <p>- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -</p>
+                            <p>- - - - - - - - - - - - - - - - - - - - - - - - - - - -</p>
                             <p>📅 ${years} years</p>
                             <p>📅 ${months} months</p>
                             <p>📅 ${weeks} weeks</p>
@@ -243,8 +258,35 @@ def home():
                     });
             }
 
-            // Update counters every second
-            setInterval(updateCounters, 1000);
+            // Keep-alive ping function
+            function keepAlive() {
+                const status = document.getElementById('keepAliveStatus');
+                fetch('/counter')
+                    .then(() => {
+                        status.style.color = '#00ff00';
+                        status.textContent = 'Keep-alive active...';
+                    })
+                    .catch(() => {
+                        status.style.color = '#ff0000';
+                        status.textContent = 'Keep-alive reconnecting...';
+                    });
+            }
+
+            // Multiple intervals for redundancy
+            setInterval(updateCounters, 1000);  // Update display every second
+            setInterval(keepAlive, 30000);      // Keep-alive ping every 30 seconds
+
+            // Initial updates
+            updateCounters();
+            keepAlive();
+
+            // Additional keep-alive on visibility change
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden) {
+                    updateCounters();
+                    keepAlive();
+                }
+            });
         </script>
     </body>
     </html>
@@ -254,13 +296,17 @@ def home():
 def proxy_to_nvidia():
     try:
         incoming_data = request.get_json()
-        current_api_key = get_next_api_key()
+        auth_header = request.headers.get('Authorization')
+        
+        if not auth_header:
+            current_api_key = get_next_api_key()
+            auth_header = f'Bearer {current_api_key}'
         
         response = requests.post(
             f"{NVIDIA_API_BASE}/chat/completions",
             json=incoming_data,
             headers={
-                'Authorization': f'Bearer {current_api_key}',
+                'Authorization': auth_header,
                 'Content-Type': 'application/json'
             },
             stream=True
