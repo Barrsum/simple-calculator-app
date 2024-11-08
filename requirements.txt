@@ -1,0 +1,7 @@
+# requirements.txt
+flask==2.3.3
+werkzeug==2.3.7
+flask-cors==4.0.0
+requests==2.31.0
+python-dotenv==1.0.0
+gunicorn==21.2.0
